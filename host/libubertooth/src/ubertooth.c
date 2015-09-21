@@ -599,6 +599,87 @@ void rx_file(FILE* fp, btbb_piconet* pn)
 	stream_rx_file(fp, cb_br_rx, pn);
 }
 
+bool cb_btle_addr_only(void* args, usb_pkt_rx *rx, int bank)
+{
+	lell_packet * pkt;
+	btle_options * opts = (btle_options *) args;
+	int i;
+	// u32 access_address = 0; // Build warning
+
+	static u32 prev_ts = 0;
+	uint32_t refAA;
+	int8_t sig, noise;
+
+	UNUSED(bank);
+
+	// display LE promiscuous mode state changes
+	if (rx->pkt_type == LE_PROMISC) {
+		u8 state = rx->data[0];
+		void *val = &rx->data[1];
+
+		return 0;
+	}
+
+	uint64_t nowns = now_ns_from_clk100ns( rx );
+
+	/* Sanity check */
+	if (rx->channel > (NUM_BREDR_CHANNELS-1))
+		return 0;
+
+	if (infile == NULL)
+		systime = time(NULL);
+
+	/* Dump to sumpfile if specified */
+	if (dumpfile) {
+		uint32_t systime_be = htobe32(systime);
+		if (fwrite(&systime_be, sizeof(systime_be), 1, dumpfile) != 1) {;}
+		if (fwrite(rx, sizeof(usb_pkt_rx), 1, dumpfile) != 1) {;}
+		fflush(dumpfile);
+	}
+
+	lell_allocate_and_decode(rx->data, rx->channel + 2402, rx->clk100ns, &pkt);
+
+	/* do nothing further if filtered due to bad AA */
+	if (opts &&
+	    (opts->allowed_access_address_errors <
+	     lell_get_access_address_offenses(pkt))) {
+		lell_packet_unref(pkt);
+		return 0;
+	}
+
+	/* Dump to PCAP/PCAPNG if specified */
+	refAA = lell_packet_is_data(pkt) ? 0 : 0x8e89bed6;
+	determine_signal_and_noise( rx, &sig, &noise );	
+#ifdef ENABLE_PCAP
+	if (h_pcap_le) {
+		/* only one of these two will succeed, depending on
+		 * whether PCAP was opened with DLT_PPI or not */
+		lell_pcap_append_packet(h_pcap_le, nowns,
+					sig, noise,
+					refAA, pkt);
+		lell_pcap_append_ppi_packet(h_pcap_le, nowns,
+					    rx->clkn_high, 
+					    rx->rssi_min, rx->rssi_max,
+					    rx->rssi_avg, rx->rssi_count,
+					    pkt);
+	}
+#endif
+	if (h_pcapng_le) {
+		lell_pcapng_append_packet(h_pcapng_le, nowns,
+					  sig, noise,
+					  refAA, pkt);
+	}
+
+	lell_print_addr(pkt);
+	printf("\n");
+
+	lell_packet_unref(pkt);
+
+	fflush(stdout);
+	
+	return 1;
+}
+
 /*
  * Sniff Bluetooth Low Energy packets.
  */

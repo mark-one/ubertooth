@@ -26,6 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h>
 
 #ifdef ENABLE_PCAP
 #include <pcap.h>
@@ -246,11 +247,6 @@ int main(int argc, char *argv[])
 	if (do_follow || do_promisc) {
 		usb_pkt_rx pkt;
 
-		int r = cmd_set_jam_mode(devh, jam_mode);
-		if (jam_mode != JAM_NONE && r != 0) {
-			printf("Jamming not supported\n");
-			return 1;
-		}
 		cmd_set_modulation(devh, MOD_BT_LOW_ENERGY);
 
 		if (do_follow) {
@@ -267,14 +263,25 @@ int main(int argc, char *argv[])
 			cmd_btle_promisc(devh);
 		}
 
-		while (1) {
+		struct timeval currenttime,starttime;
+		gettimeofday(&starttime, NULL);
+		gettimeofday(&currenttime, NULL);
+
+		//Two second timeout!
+		while (currenttime.tv_sec < (starttime.tv_sec+2)) {
+			//Update the time
+			gettimeofday(&currenttime, NULL);
+			
 			int r = cmd_poll(devh, &pkt);
 			if (r < 0) {
 				printf("USB error\n");
 				break;
 			}
 			if (r == sizeof(usb_pkt_rx))
-				cb_btle(&cb_opts, &pkt, 0);
+				//If we get a valid packet return to exit!
+				if( cb_btle_addr_only(&cb_opts, &pkt, 0) ){
+					break;
+				}
 			usleep(500);
 		}
 		ubertooth_stop(devh);
